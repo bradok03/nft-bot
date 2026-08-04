@@ -9,7 +9,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 # ================== НАСТРОЙКИ ==================
-BOT_TOKEN = os.getenv(8534751253:AAElwGB5maC6dTu_9MbZhNEN8rraVwzCpaA)          # Токен берётся из переменных окружения
+BOT_TOKEN = os.getenv("BOT_TOKEN")          # Токен берётся из переменных окружения
 ADMIN_ID = 8921066517
 BUYER_USERNAME = "@skaence"
 # ===============================================
