@@ -61,7 +61,6 @@ async def start(message: Message, state: FSMContext):
         reply_markup=inline_kb,
         parse_mode="HTML"
     )
-    # Просто показываем кнопку техподдержки без лишнего текста
     await message.answer(" ", reply_markup=reply_kb)
 
 
@@ -155,17 +154,20 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
 
     if role == "sell":
         seller_id = user.id
+        buyer_id = registered_users.get(other_username_clean)
     else:
         seller_id = registered_users.get(other_username_clean)
+        buyer_id = user.id
 
     deals[deal_id] = {
         "role": role,
         "sender_id": user.id,
         "seller_id": seller_id,
+        "buyer_id": buyer_id,
         "price": data["price"],
         "nft_name": data["nft_name"],
-        "my_username": data["my_username"],
-        "other_username": data["other_username"]
+        "paid": False,
+        "nft_sent": False
     }
 
     deal_text = (
@@ -259,25 +261,29 @@ async def user_paid(callback: CallbackQuery):
         await callback.answer("Заявка устарела", show_alert=True)
         return
 
+    deal["paid"] = True
     seller_id = deal.get("seller_id")
-    sender_id = deal["sender_id"]
 
+    # Отправляем продавцу сообщение + кнопку
     if seller_id:
         try:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Я отправил NFT", callback_data=f"nft_sent:{deal_id}")]
+            ])
             await bot.send_message(
                 seller_id,
                 "Покупатель оплатил заказ.\n\n"
                 "Отправьте NFT администратору @skaence на удержание.\n\n"
-                "В течение 7 дней вы получите деньги."
+                "После отправки нажмите кнопку ниже.",
+                reply_markup=kb
             )
         except Exception:
             pass
 
     await bot.send_message(
         ADMIN_ID,
-        f"Пользователь (ID: <code>{sender_id}</code>) нажал «Я отправил деньги».\n"
-        f"Ожидается отправка NFT администратору @skaence.",
-        parse_mode="HTML"
+        f"Пользователь нажал «Я отправил деньги» (сделка {deal_id}).\n"
+        f"Ожидается отправка NFT администратору @skaence."
     )
 
     await callback.message.edit_text(
@@ -285,6 +291,70 @@ async def user_paid(callback: CallbackQuery):
         parse_mode="HTML"
     )
     await callback.answer("Готово")
+
+    # Проверяем, не завершена ли уже сделка
+    await check_deal_complete(deal_id)
+
+
+@dp.callback_query(F.data.startswith("nft_sent:"))
+async def nft_sent(callback: CallbackQuery):
+    deal_id = callback.data.split(":")[1]
+    deal = deals.get(deal_id)
+
+    if not deal:
+        await callback.answer("Заявка устарела", show_alert=True)
+        return
+
+    deal["nft_sent"] = True
+
+    await callback.message.edit_text(
+        callback.message.text + "\n\n✅ <b>Отмечено: NFT отправлен</b>",
+        parse_mode="HTML"
+    )
+    await callback.answer("Готово")
+
+    await bot.send_message(
+        ADMIN_ID,
+        f"Продавец нажал «Я отправил NFT» (сделка {deal_id})."
+    )
+
+    await check_deal_complete(deal_id)
+
+
+async def check_deal_complete(deal_id: str):
+    deal = deals.get(deal_id)
+    if not deal:
+        return
+
+    if deal.get("paid") and deal.get("nft_sent"):
+        seller_id = deal.get("seller_id")
+        buyer_id = deal.get("buyer_id")
+
+        if seller_id:
+            try:
+                await bot.send_message(
+                    seller_id,
+                    "Вы получите деньги в течение 7 дней."
+                )
+            except Exception:
+                pass
+
+        if buyer_id:
+            try:
+                await bot.send_message(
+                    buyer_id,
+                    "Вы получите NFT в течение 7 дней."
+                )
+            except Exception:
+                pass
+
+        await bot.send_message(
+            ADMIN_ID,
+            f"Сделка {deal_id} полностью завершена обеими сторонами."
+        )
+
+        # Можно удалить сделку
+        deals.pop(deal_id, None)
 
 
 @dp.callback_query(F.data.startswith("reject:"))
