@@ -166,12 +166,12 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
     if other_id:
         try:
             await bot.send_message(other_id, deal_text, reply_markup=kb, parse_mode="HTML")
-            status = "Заявка отправлена второй стороне и администратору."
+            status = "Заявка отправлена второй стороне."
         except Exception:
-            status = "Заявка отправлена только администратору (вторая сторона недоступна)."
+            status = "Заявка не отправлена (вторая сторона недоступна)."
     else:
         status = (
-            "Заявка отправлена администратору.\n"
+            "Заявка не отправилась.\n"
             "Вторая сторона ещё не запускала бота, поэтому ей заявка не пришла."
         )
 
