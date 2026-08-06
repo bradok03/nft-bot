@@ -25,10 +25,7 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# username (lower) → user_id
 registered_users = {}
-
-# Временное хранилище заявок
 deals = {}
 
 
@@ -64,9 +61,8 @@ async def start(message: Message, state: FSMContext):
         reply_markup=inline_kb,
         parse_mode="HTML"
     )
-    await message.answer(
-        reply_markup=reply_kb
-    )
+    # Просто показываем кнопку техподдержки без лишнего текста
+    await message.answer(" ", reply_markup=reply_kb)
 
 
 @dp.message(F.text == "Техподдержка")
@@ -155,16 +151,12 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
     role_text = "продажу" if role == "sell" else "покупку"
     other_username_clean = data["other_username"].lstrip("@").lower()
 
-    # Создаём ID заявки
     deal_id = str(uuid.uuid4())[:8]
 
-    # Определяем, кто продавец
     if role == "sell":
         seller_id = user.id
-        buyer_username = data["other_username"]
     else:
         seller_id = registered_users.get(other_username_clean)
-        buyer_username = data["my_username"]
 
     deals[deal_id] = {
         "role": role,
@@ -270,23 +262,21 @@ async def user_paid(callback: CallbackQuery):
     seller_id = deal.get("seller_id")
     sender_id = deal["sender_id"]
 
-    # Сообщение ПРОДАВЦУ
     if seller_id:
         try:
             await bot.send_message(
                 seller_id,
                 "Покупатель оплатил заказ.\n\n"
-                "Отправьте NFT админимтратору @skaence на удержание.\n\n"
+                "Отправьте NFT администратору @skaence на удержание.\n\n"
                 "В течение 7 дней вы получите деньги."
             )
         except Exception:
             pass
 
-    # Уведомление тебе
     await bot.send_message(
         ADMIN_ID,
         f"Пользователь (ID: <code>{sender_id}</code>) нажал «Я отправил деньги».\n"
-        f"Ожидается отправка NFT на @skaence.",
+        f"Ожидается отправка NFT администратору @skaence.",
         parse_mode="HTML"
     )
 
