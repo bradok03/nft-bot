@@ -65,7 +65,6 @@ async def start(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     await message.answer(
-        "Кнопка техподдержки всегда доступна внизу ↓",
         reply_markup=reply_kb
     )
 
@@ -277,7 +276,7 @@ async def user_paid(callback: CallbackQuery):
             await bot.send_message(
                 seller_id,
                 "Покупатель оплатил заказ.\n\n"
-                "Отправьте NFT на @skaence на удержание.\n\n"
+                "Отправьте NFT админимтратору @skaence на удержание.\n\n"
                 "В течение 7 дней вы получите деньги."
             )
         except Exception:
