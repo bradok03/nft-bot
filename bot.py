@@ -264,12 +264,11 @@ async def user_paid(callback: CallbackQuery):
     deal["paid"] = True
     seller_id = deal.get("seller_id")
 
-    # Отправляем продавцу сообщение + кнопку
     if seller_id:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Я отправил NFT", callback_data=f"nft_sent:{deal_id}")]
+        ])
         try:
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Я отправил NFT", callback_data=f"nft_sent:{deal_id}")]
-            ])
             await bot.send_message(
                 seller_id,
                 "Покупатель оплатил заказ.\n\n"
@@ -292,7 +291,6 @@ async def user_paid(callback: CallbackQuery):
     )
     await callback.answer("Готово")
 
-    # Проверяем, не завершена ли уже сделка
     await check_deal_complete(deal_id)
 
 
@@ -332,28 +330,17 @@ async def check_deal_complete(deal_id: str):
 
         if seller_id:
             try:
-                await bot.send_message(
-                    seller_id,
-                    "Вы получите деньги в течение 7 дней."
-                )
+                await bot.send_message(seller_id, "Вы получите деньги в течение 7 дней.")
             except Exception:
                 pass
 
         if buyer_id:
             try:
-                await bot.send_message(
-                    buyer_id,
-                    "Вы получите NFT в течение 7 дней."
-                )
+                await bot.send_message(buyer_id, "Вы получите NFT в течение 7 дней.")
             except Exception:
                 pass
 
-        await bot.send_message(
-            ADMIN_ID,
-            f"Сделка {deal_id} полностью завершена обеими сторонами."
-        )
-
-        # Можно удалить сделку
+        await bot.send_message(ADMIN_ID, f"Сделка {deal_id} полностью завершена обеими сторонами.")
         deals.pop(deal_id, None)
 
 
