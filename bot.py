@@ -19,10 +19,15 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+# Здесь храним зарегистрированных пользователей (username → user_id)
+# Внимание: при перезапуске бота этот список сбрасывается
+registered_users = {}
 
-class SellNFT(StatesGroup):
-    seller_username = State()
-    buyer_username = State()
+
+class Form(StatesGroup):
+    role = State()
+    my_username = State()
+    other_username = State()
     nft_name = State()
     price = State()
     confirm = State()
@@ -31,55 +36,87 @@ class SellNFT(StatesGroup):
 @dp.message(CommandStart())
 async def start(message: Message, state: FSMContext):
     await state.clear()
+
+    # Регистрируем пользователя
+    if message.from_user.username:
+        registered_users[message.from_user.username.lower()] = message.from_user.id
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛒 Продать NFT", callback_data="role_sell")],
+        [InlineKeyboardButton(text="💰 Купить NFT", callback_data="role_buy")]
+    ])
+
     await message.answer(
-        "<b>Заявка на продажу NFT</b>\n\n"
-        "Отправь <b>свой юзернейм</b> (куда переводить деньги):\n"
-        "Например: @username",
+        "<b>Добро пожаловать!</b>\n\n"
+        "Выбери, что хочешь сделать:",
+        reply_markup=kb,
         parse_mode="HTML"
     )
-    await state.set_state(SellNFT.seller_username)
 
 
-@dp.message(SellNFT.seller_username)
-async def process_seller_username(message: Message, state: FSMContext):
-    await state.update_data(seller_username=message.text.strip())
-    await message.answer(
-        "Теперь напиши <b>юзернейм покупателя</b>:\n"
-        "Например: @username",
+@dp.callback_query(F.data.in_({"role_sell", "role_buy"}))
+async def choose_role(callback: CallbackQuery, state: FSMContext):
+    role = "sell" if callback.data == "role_sell" else "buy"
+    await state.update_data(role=role)
+
+    action = "продать" if role == "sell" else "купить"
+
+    await callback.message.edit_text(
+        f"Ты хочешь <b>{action}</b> NFT.\n\n"
+        f"Отправь <b>свой юзернейм</b>:\n"
+        f"Например: @username",
         parse_mode="HTML"
     )
-    await state.set_state(SellNFT.buyer_username)
+    await state.set_state(Form.my_username)
+    await callback.answer()
 
 
-@dp.message(SellNFT.buyer_username)
-async def process_buyer_username(message: Message, state: FSMContext):
-    await state.update_data(buyer_username=message.text.strip())
+@dp.message(Form.my_username)
+async def process_my_username(message: Message, state: FSMContext):
+    await state.update_data(my_username=message.text.strip())
+    data = await state.get_data()
+
+    other = "покупателя" if data["role"] == "sell" else "продавца"
+
+    await message.answer(
+        f"Теперь напиши <b>юзернейм {other}</b>:\n"
+        f"Например: @username",
+        parse_mode="HTML"
+    )
+    await state.set_state(Form.other_username)
+
+
+@dp.message(Form.other_username)
+async def process_other_username(message: Message, state: FSMContext):
+    await state.update_data(other_username=message.text.strip())
     await message.answer(
         "Теперь напиши <b>название NFT</b>:",
         parse_mode="HTML"
     )
-    await state.set_state(SellNFT.nft_name)
+    await state.set_state(Form.nft_name)
 
 
-@dp.message(SellNFT.nft_name)
+@dp.message(Form.nft_name)
 async def process_nft_name(message: Message, state: FSMContext):
     await state.update_data(nft_name=message.text.strip())
     await message.answer(
-        "Теперь укажи <b>цену</b> (например: 150 TON или 1500 рублей):",
+        "Теперь укажи <b>цену</b> (например: 150 TON):",
         parse_mode="HTML"
     )
-    await state.set_state(SellNFT.price)
+    await state.set_state(Form.price)
 
 
-@dp.message(SellNFT.price)
+@dp.message(Form.price)
 async def process_price(message: Message, state: FSMContext):
     await state.update_data(price=message.text.strip())
     data = await state.get_data()
 
+    role_text = "Продажа" if data["role"] == "sell" else "Покупка"
+
     text = (
-        f"<b>Проверь заявку:</b>\n\n"
-        f"Твой юзернейм: <code>{data['seller_username']}</code>\n"
-        f"Юзернейм покупателя: <code>{data['buyer_username']}</code>\n"
+        f"<b>Проверь заявку ({role_text}):</b>\n\n"
+        f"Твой юзернейм: <code>{data['my_username']}</code>\n"
+        f"Юзернейм второй стороны: <code>{data['other_username']}</code>\n"
         f"Название NFT: <b>{data['nft_name']}</b>\n"
         f"Цена: <b>{data['price']}</b>\n\n"
         f"Всё верно?"
@@ -92,38 +129,58 @@ async def process_price(message: Message, state: FSMContext):
         ]
     ])
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
-    await state.set_state(SellNFT.confirm)
+    await state.set_state(Form.confirm)
 
 
-@dp.callback_query(SellNFT.confirm, F.data == "confirm_yes")
+@dp.callback_query(Form.confirm, F.data == "confirm_yes")
 async def confirm_yes(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    seller = callback.from_user
+    user = callback.from_user
 
-    admin_text = (
-        f"<b>Новая заявка на продажу NFT</b>\n\n"
-        f"От: {seller.full_name} (@{seller.username or 'нет'})\n"
-        f"ID продавца: <code>{seller.id}</code>\n\n"
-        f"Юзернейм продавца: <code>{data['seller_username']}</code>\n"
-        f"Юзернейм покупателя: <code>{data['buyer_username']}</code>\n"
+    role_text = "продажу" if data["role"] == "sell" else "покупку"
+    other_username = data["other_username"].lstrip("@").lower()
+
+    # Текст заявки
+    deal_text = (
+        f"<b>Новая заявка на {role_text} NFT</b>\n\n"
+        f"От: {user.full_name} (@{user.username or 'нет'})\n"
+        f"ID: <code>{user.id}</code>\n\n"
+        f"Юзернейм отправителя: <code>{data['my_username']}</code>\n"
+        f"Юзернейм второй стороны: <code>{data['other_username']}</code>\n"
         f"Название NFT: <b>{data['nft_name']}</b>\n"
         f"Цена: <b>{data['price']}</b>"
     )
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✅ Согласиться", callback_data=f"accept:{seller.id}"),
-            InlineKeyboardButton(text="❌ Отказаться", callback_data=f"reject:{seller.id}")
+            InlineKeyboardButton(text="✅ Согласиться", callback_data=f"accept:{user.id}"),
+            InlineKeyboardButton(text="❌ Отказаться", callback_data=f"reject:{user.id}")
         ]
     ])
 
-    await bot.send_message(ADMIN_ID, admin_text, reply_markup=kb, parse_mode="HTML")
-    await callback.message.edit_text("✅ Заявка отправлена. Ожидай решения.")
+    # Отправляем админу всегда
+    await bot.send_message(ADMIN_ID, deal_text, reply_markup=kb, parse_mode="HTML")
+
+    # Пытаемся отправить второй стороне
+    other_id = registered_users.get(other_username)
+    if other_id:
+        try:
+            await bot.send_message(other_id, deal_text, reply_markup=kb, parse_mode="HTML")
+            status = "Заявка отправлена второй стороне и администратору."
+        except Exception:
+            status = "Заявка отправлена только администратору (вторая сторона недоступна)."
+    else:
+        status = (
+            "Заявка отправлена администратору.\n"
+            "Вторая сторона ещё не запускала бота, поэтому ей заявка не пришла."
+        )
+
+    await callback.message.edit_text(f"✅ {status}")
     await state.clear()
     await callback.answer()
 
 
-@dp.callback_query(SellNFT.confirm, F.data == "confirm_no")
+@dp.callback_query(Form.confirm, F.data == "confirm_no")
 async def confirm_no(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Заявка отменена.")
     await state.clear()
@@ -132,35 +189,32 @@ async def confirm_no(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("accept:"))
 async def accept_deal(callback: CallbackQuery):
-    seller_id = int(callback.data.split(":")[1])
+    sender_id = int(callback.data.split(":")[1])
 
-    # Сообщение продавцу
     await bot.send_message(
-        seller_id,
-        "Покупатель оплатил заказ.\n\n"
+        sender_id,
+        "Покупатель/продавец согласился и оплатил заказ.\n\n"
         "После отправки NFT вы получите деньги."
     )
 
-    # Кнопка "Подтвердить оплату" для админа
     new_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"confirm_pay:{seller_id}")]
+        [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"confirm_pay:{sender_id}")]
     ])
 
     await callback.message.edit_text(
-        callback.message.text + "\n\n✅ <b>Ты согласился</b>\n\nНажми кнопку ниже, когда будешь готов подтвердить оплату:",
+        callback.message.text + "\n\n✅ <b>Ты согласился</b>\n\nНажми кнопку, чтобы подтвердить оплату:",
         reply_markup=new_kb,
         parse_mode="HTML"
     )
-    await callback.answer("Продавцу отправлено уведомление")
+    await callback.answer("Уведомление отправлено")
 
 
 @dp.callback_query(F.data.startswith("confirm_pay:"))
 async def confirm_payment(callback: CallbackQuery):
-    seller_id = int(callback.data.split(":")[1])
+    sender_id = int(callback.data.split(":")[1])
 
-    # Финальное сообщение продавцу
     await bot.send_message(
-        seller_id,
+        sender_id,
         "Деньги будут пополнены на баланс Telegram в течение 7 дней."
     )
 
@@ -168,23 +222,23 @@ async def confirm_payment(callback: CallbackQuery):
         callback.message.text + "\n\n💰 <b>Оплата подтверждена</b>",
         parse_mode="HTML"
     )
-    await callback.answer("Продавцу отправлено финальное уведомление")
+    await callback.answer("Финальное уведомление отправлено")
 
 
 @dp.callback_query(F.data.startswith("reject:"))
 async def reject_deal(callback: CallbackQuery):
-    seller_id = int(callback.data.split(":")[1])
+    sender_id = int(callback.data.split(":")[1])
 
     await bot.send_message(
-        seller_id,
-        "К сожалению, покупатель отказался от вашей заявки."
+        sender_id,
+        "К сожалению, вторая сторона отказалась от вашей заявки."
     )
 
     await callback.message.edit_text(
         callback.message.text + "\n\n❌ <b>Ты отказался</b>",
         parse_mode="HTML"
     )
-    await callback.answer("Продавцу отправлено уведомление об отказе")
+    await callback.answer("Уведомление об отказе отправлено")
 
 
 async def main():
