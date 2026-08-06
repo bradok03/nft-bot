@@ -148,4 +148,110 @@ async def confirm_yes(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Согласиться", callback_data=f"accept:{user.id}:{role}"),
-            InlineKeyboardButton(text="❌
+            InlineKeyboardButton(text="❌ Отказаться", callback_data=f"reject:{user.id}")
+        ]
+    ])
+
+    # Всегда отправляем админу
+    await bot.send_message(ADMIN_ID, deal_text, reply_markup=kb, parse_mode="HTML")
+
+    # Отправляем второй стороне
+    other_id = registered_users.get(other_username_clean)
+    status_parts = ["Заявка отправлена администратору."]
+
+    if other_id:
+        try:
+            await bot.send_message(other_id, deal_text, reply_markup=kb, parse_mode="HTML")
+            if role == "sell":
+                status_parts.append("Заявка также отправлена покупателю.")
+            else:
+                status_parts.append("Заявка также отправлена продавцу.")
+        except Exception:
+            status_parts.append("Вторая сторона недоступна.")
+    else:
+        if role == "sell":
+            status_parts.append("Покупатель ещё не запускал бота.")
+        else:
+            status_parts.append("Продавец ещё не запускал бота.")
+
+    await callback.message.edit_text("✅ " + "\n".join(status_parts))
+    await state.clear()
+    await callback.answer()
+
+
+@dp.callback_query(Form.confirm, F.data == "confirm_no")
+async def confirm_no(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("Заявка отменена.")
+    await state.clear()
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("accept:"))
+async def accept_deal(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    sender_id = int(parts[1])
+    role = parts[2] if len(parts) > 2 else "sell"
+
+    # Сообщение с реквизитами для оплаты
+    payment_text = (
+        f"<b>Заявка принята!</b>\n\n"
+        f"Для оплаты переведите сумму на карту:\n\n"
+        f"<code>{CARD_NUMBER}</code>\n\n"
+        f"⚠️ Деньги будут на удержании и отправятся продавцу только в течение 7 дней после подтверждения.\n\n"
+        f"После перевода ожидайте подтверждения."
+    )
+
+    await bot.send_message(sender_id, payment_text, parse_mode="HTML")
+
+    # Кнопка подтверждения оплаты (для того, кто принял, или админа)
+    new_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"confirm_pay:{sender_id}")]
+    ])
+
+    await callback.message.edit_text(
+        callback.message.text + "\n\n✅ <b>Ты согласился</b>\n\nНажми кнопку, когда оплата поступит:",
+        reply_markup=new_kb,
+        parse_mode="HTML"
+    )
+    await callback.answer("Реквизиты отправлены")
+
+
+@dp.callback_query(F.data.startswith("confirm_pay:"))
+async def confirm_payment(callback: CallbackQuery):
+    sender_id = int(callback.data.split(":")[1])
+
+    await bot.send_message(
+        sender_id,
+        "Оплата подтверждена.\n\n"
+        "Деньги находятся на удержании и будут отправлены в течение 7 дней."
+    )
+
+    await callback.message.edit_text(
+        callback.message.text + "\n\n💰 <b>Оплата подтверждена</b>",
+        parse_mode="HTML"
+    )
+    await callback.answer("Подтверждение отправлено")
+
+
+@dp.callback_query(F.data.startswith("reject:"))
+async def reject_deal(callback: CallbackQuery):
+    sender_id = int(callback.data.split(":")[1])
+
+    await bot.send_message(
+        sender_id,
+        "К сожалению, вторая сторона отказалась от вашей заявки."
+    )
+
+    await callback.message.edit_text(
+        callback.message.text + "\n\n❌ <b>Ты отказался</b>",
+        parse_mode="HTML"
+    )
+    await callback.answer("Отказ отправлен")
+
+
+async def main():
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
