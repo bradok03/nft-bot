@@ -45,7 +45,7 @@ async def process_seller_username(message: Message, state: FSMContext):
     await state.update_data(seller_username=message.text.strip())
     await message.answer(
         "Теперь напиши <b>юзернейм покупателя</b>:\n"
-        "Например: @skaence",
+        "Например: @username",
         parse_mode="HTML"
     )
     await state.set_state(SellNFT.buyer_username)
@@ -65,7 +65,7 @@ async def process_buyer_username(message: Message, state: FSMContext):
 async def process_nft_name(message: Message, state: FSMContext):
     await state.update_data(nft_name=message.text.strip())
     await message.answer(
-        "Теперь укажи <b>цену</b> (например: 150 TON):",
+        "Теперь укажи <b>цену</b> (например: 150 TON или 1500 рублей):",
         parse_mode="HTML"
     )
     await state.set_state(SellNFT.price)
