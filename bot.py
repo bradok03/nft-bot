@@ -228,8 +228,13 @@ async def accept_deal(callback: CallbackQuery):
         await callback.answer("Заявка устарела", show_alert=True)
         return
 
-    sender_id = deal["sender_id"]
+    # Всегда отправляем реквизиты ПОКУПАТЕЛЮ
+    buyer_id = deal.get("buyer_id")
     price = deal["price"]
+
+    if not buyer_id:
+        await callback.answer("Покупатель не найден в системе", show_alert=True)
+        return
 
     payment_text = (
         f"<b>Заявка принята!</b>\n\n"
@@ -243,13 +248,13 @@ async def accept_deal(callback: CallbackQuery):
         [InlineKeyboardButton(text="✅ Я отправил деньги", callback_data=f"paid:{deal_id}")]
     ])
 
-    await bot.send_message(sender_id, payment_text, reply_markup=kb, parse_mode="HTML")
+    await bot.send_message(buyer_id, payment_text, reply_markup=kb, parse_mode="HTML")
 
     await callback.message.edit_text(
         callback.message.text + "\n\n✅ <b>Ты согласился</b>",
         parse_mode="HTML"
     )
-    await callback.answer("Реквизиты отправлены")
+    await callback.answer("Реквизиты отправлены покупателю")
 
 
 @dp.callback_query(F.data.startswith("paid:"))
@@ -281,7 +286,7 @@ async def user_paid(callback: CallbackQuery):
 
     await bot.send_message(
         ADMIN_ID,
-        f"Пользователь нажал «Я отправил деньги» (сделка {deal_id}).\n"
+        f"Покупатель нажал «Я отправил деньги» (сделка {deal_id}).\n"
         f"Ожидается отправка NFT администратору @skaence."
     )
 
